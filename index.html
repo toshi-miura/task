@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <title>定期タスク管理アプリ</title>
+  <style>
+    body {
+      font-family: "メイリオ", sans-serif;
+      margin: 20px;
+      background-color: #f4f4f4;
+    }
+    h1 {
+      text-align: center;
+    }
+    nav {
+      text-align: center;
+      margin-bottom: 20px;
+    }
+    nav button {
+      margin: 0 5px;
+      padding: 10px 20px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background-color: #fff;
+    }
+    table, th, td {
+      border: 1px solid #ccc;
+    }
+    th, td {
+      padding: 8px;
+      text-align: center;
+    }
+    tr.done {
+      background-color: #d0f0c0;
+      text-decoration: line-through;
+    }
+    .view-container {
+      margin-bottom: 40px;
+    }
+  </style>
+</head>
+<body>
+  <h1>定期タスク管理アプリ</h1>
+  <nav>
+    <button id="todayTab">今日のタスク</button>
+    <button id="weekTab">週間タスク</button>
+    <button id="rateTab">達成率</button>
+  </nav>
+  
+  <!-- 今日のタスク表示 -->
+  <div id="todayView" class="view-container"></div>
+  <!-- 週間タスク表示 -->
+  <div id="weekView" class="view-container" style="display:none;"></div>
+  <!-- タスク達成率表示 -->
+  <div id="rateView" class="view-container" style="display:none;"></div>
+  
+  <script>
+    // グローバル変数：セッションストレージから読み込むタスクデータ（各日付ごとにタスクの配列）
+    var tasksData = {};
+    // セッションストレージキー名
+    const STORAGE_KEY = "tasksData";
+
+    // ページ読み込み時の初期処理
+    window.addEventListener("load", function(){
+      loadData();
+      let today = getTodayDateString();
+      initializeTasksForDate(today);
+      saveData();
+      renderTodayView();
+      renderWeekView();
+      renderRateView();
+      scheduleTodayNotifications();
+      setupTabListeners();
+      // プッシュ通知の権限確認
+      if ("Notification" in window) {
+        Notification.requestPermission();
+      }
+    });
+
+    // セッションストレージからデータを読み込み
+    function loadData(){
+      let data = sessionStorage.getItem(STORAGE_KEY);
+      if(data){
+        tasksData = JSON.parse(data);
+      } else {
+        tasksData = {};
+      }
+    }
+
+    // セッションストレージへデータを保存
+    function saveData(){
+      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(tasksData));
+    }
+
+    // 今日の日付文字列を「YYYY-MM-DD」で返す
+    function getTodayDateString(){
+      let today = new Date();
+      let yyyy = today.getFullYear();
+      let mm = ("0" + (today.getMonth()+1)).slice(-2);
+      let dd = ("0" + today.getDate()).slice(-2);
+      return yyyy + "-" + mm + "-" + dd;
+    }
+
+    // 指定日付のタスクが存在しなければ初期化する（服薬とトレーニングタスク）
+    function initializeTasksForDate(dateStr){
+      if(tasksData[dateStr] === undefined){
+        let tasks = [];
+        // 服薬タスク（時間は固定）
+        tasks.push({ id: dateStr + "-08:00-服薬", time: "08:00", type:"服薬", description:"朝服薬", done:false });
+        tasks.push({ id: dateStr + "-12:00-服薬", time: "12:00", type:"服薬", description:"昼服薬", done:false });
+        tasks.push({ id: dateStr + "-20:00-服薬", time: "20:00", type:"服薬", description:"晩服薬", done:false });
+        // トレーニングタスク：10:00～20:00まで45分毎（10:00～19:45）
+        let startMinutes = 10 * 60;  // 10:00
+        let endMinutes = 20 * 60;    // 20:00
+        for(let t = startMinutes; t < endMinutes; t += 45){
+          let hours = Math.floor(t / 60);
+          let minutes = t % 60;
+          let timeStr = ("0" + hours).slice(-2) + ":" + ("0" + minutes).slice(-2);
+          // IDは日付＋時刻＋タイプ
+          tasks.push({ id: dateStr + "-" + timeStr + "-トレーニング", time: timeStr, type:"トレーニング", description:"トレーニング", done:false });
+        }
+        // 時刻順にソート（文字列として比較しても正しくなる前提）
+        tasks.sort(function(a, b){
+          return a.time.localeCompare(b.time);
+        });
+        tasksData[dateStr] = tasks;
+      }
+    }
+
+    // 今日のタスク表示をレンダリングする
+    function renderTodayView(){
+      let today = getTodayDateString();
+      initializeTasksForDate(today);
+      let tasks = tasksData[today];
+      let container = document.getElementById("todayView");
+      container.innerHTML = "<h2>本日のタスク (" + today + ")</h2>";
+      // テーブル作成
+      let tableHTML = "<table><thead><tr><th>時刻</th><th>タスク名</th><th>状態</th><th>操作</th></tr></thead><tbody>";
+      tasks.forEach(task => {
+        tableHTML += "<tr id='" + task.id + "' class='" + (task.done ? "done" : "") + "'>";
+        tableHTML += "<td>" + task.time + "</td>";
+        tableHTML += "<td>" + task.description + "</td>";
+        tableHTML += "<td>" + (task.done ? "実施済み" : "未実施") + "</td>";
+        // ボタン押下でタスクの完了状態を切替
+        tableHTML += "<td><button onclick='toggleTaskStatus(\"" + task.id + "\")'>" + (task.done ? "未完了に戻す" : "完了") + "</button></td>";
+        tableHTML += "</tr>";
+      });
+      tableHTML += "</tbody></table>";
+      container.innerHTML += tableHTML;
+    }
+
+    // 週間タスク表示をレンダリングする（直近7日間）
+    function renderWeekView(){
+      let container = document.getElementById("weekView");
+      container.innerHTML = "<h2>週間タスク実施状況</h2>";
+      let tableHTML = "<table><thead><tr><th>日付</th><th>タスク数</th><th>完了数</th><th>達成率</th></tr></thead><tbody>";
+      for(let i = 6; i >= 0; i--){
+        let d = new Date();
+        d.setDate(d.getDate() - i);
+        let dateStr = d.getFullYear() + "-" + ("0"+(d.getMonth()+1)).slice(-2) + "-" + ("0"+d.getDate()).slice(-2);
+        // 初期化（初めての日は自動生成）
+        initializeTasksForDate(dateStr);
+        let tasks = tasksData[dateStr];
+        let total = tasks.length;
+        let doneCount = tasks.filter(t => t.done).length;
+        let rate = total ? Math.round((doneCount/total)*100) : 0;
+        tableHTML += "<tr>";
+        tableHTML += "<td>" + dateStr + "</td>";
+        tableHTML += "<td>" + total + "</td>";
+        tableHTML += "<td>" + doneCount + "</td>";
+        tableHTML += "<td>" + rate + "％</td>";
+        tableHTML += "</tr>";
+      }
+      tableHTML += "</tbody></table>";
+      container.innerHTML += tableHTML;
+    }
+
+    // タスク達成率画面のレンダリング（直近7日間全体の達成率）
+    function renderRateView(){
+      let container = document.getElementById("rateView");
+      container.innerHTML = "<h2>タスク達成率</h2>";
+      let totalTasks = 0;
+      let totalDone = 0;
+      for(let i = 6; i >= 0; i--){
+        let d = new Date();
+        d.setDate(d.getDate() - i);
+        let dateStr = d.getFullYear() + "-" + ("0"+(d.getMonth()+1)).slice(-2) + "-" + ("0"+d.getDate()).slice(-2);
+        initializeTasksForDate(dateStr);
+        let tasks = tasksData[dateStr];
+        totalTasks += tasks.length;
+        totalDone += tasks.filter(t => t.done).length;
+      }
+      let rate = totalTasks ? Math.round((totalDone/totalTasks)*100) : 0;
+      container.innerHTML += "<p>直近7日間のタスク達成率は <strong>" + rate + "％</strong> です。</p>";
+    }
+
+    // タスクの完了状態を切替える
+    function toggleTaskStatus(taskId){
+      let today = getTodayDateString();
+      let tasks = tasksData[today];
+      for(let i=0; i<tasks.length; i++){
+        if(tasks[i].id === taskId){
+          tasks[i].done = !tasks[i].done;
+          break;
+        }
+      }
+      saveData();
+      renderTodayView();
+      renderWeekView();
+      renderRateView();
+    }
+
+    // 今日のタスクのうち、まだ実施されていないタスクに対してpush通知をスケジュールする
+    function scheduleTodayNotifications(){
+      if(!("Notification" in window)){
+        console.log("このブラウザは通知に対応していません。");
+        return;
+      }
+      let today = getTodayDateString();
+      let tasks = tasksData[today];
+      let now = new Date();
+      tasks.forEach(task => {
+        // すでに完了している場合はスキップ
+        if(task.done) return;
+        // 本日の日付とタスクの時刻を合成してDateオブジェクトを作成
+        let taskTime = new Date(today + "T" + task.time + ":00");
+        let delay = taskTime.getTime() - now.getTime();
+        if(delay > 0){
+          setTimeout(function(){
+            // 再度データを取得し、未完了であれば通知を表示
+            loadData();
+            let currentTask = tasksData[today].find(t => t.id === task.id);
+            if(currentTask && !currentTask.done){
+              if(Notification.permission === "granted"){
+                new Notification("タスク通知", { body: task.time + "　" + task.description });
+              }
+            }
+          }, delay);
+        }
+      });
+    }
+
+    // タブ切替のイベント設定
+    function setupTabListeners(){
+      document.getElementById("todayTab").addEventListener("click", function(){
+        document.getElementById("todayView").style.display = "";
+        document.getElementById("weekView").style.display = "none";
+        document.getElementById("rateView").style.display = "none";
+      });
+      document.getElementById("weekTab").addEventListener("click", function(){
+        document.getElementById("todayView").style.display = "none";
+        document.getElementById("weekView").style.display = "";
+        document.getElementById("rateView").style.display = "none";
+      });
+      document.getElementById("rateTab").addEventListener("click", function(){
+        document.getElementById("todayView").style.display = "none";
+        document.getElementById("weekView").style.display = "none";
+        document.getElementById("rateView").style.display = "";
+      });
+    }
+  </script>
+</body>
+</html>
